@@ -353,6 +353,7 @@ class MultiAngleDetector:
         """
         Calculate phi (azimuth) and theta (altitude) from accelerometer data
         Using consistent coordinate system: East(X), Down(Y), North(Z)
+
         
         Args:
             accel_data: Nx3 accelerometer data in g [ax, ay, az]
@@ -360,6 +361,7 @@ class MultiAngleDetector:
         Returns:
             phi: Azimuth angles in degrees (rotation around vertical axis)
             theta: Altitude angles in degrees (elevation angle)
+
         """
         ax, ay, az = accel_data[:, 0], accel_data[:, 1], accel_data[:, 2]
         
@@ -841,13 +843,15 @@ for file_path, segments in segmented.items():
 # %%
 def accel_to_attitude(accel_g: np.ndarray) -> np.ndarray:
     """Calculate roll and pitch from accelerometer data
-    Using consistent coordinate system: East(X), Down(Y), North(Z)
-    
+        Using consistent coordinate system: East(X), Down(Y), North(Z)
+
     Args:
         accel_g: Nx3 array of accelerometer data in g [ax, ay, az]
+
     Returns:
         Nx3 array of [roll, pitch, yaw] in degrees (yaw=0)
         Note: roll=phi (azimuth), pitch=theta (altitude) in this context
+
     """
     ax, ay, az = accel_g[:, 0], accel_g[:, 1], accel_g[:, 2]
     
@@ -980,6 +984,7 @@ for file_path, results in all_results.items():
     ax.set_xlabel('Ground Truth')
     ax.set_ylabel('Predicted')
     plt.show()
+
 
 
 # %%
@@ -1161,6 +1166,7 @@ for correlation in power_off_correlations:
         print(f"Expected: {result['phi_expected']}°, Measured: {result['delta_phi_measured']:.2f}°, "
             f"Error: {result['error_deg_phi']:.2f}°")
 
+
 # %%
 # Summary comparison table
 if correlation_results:
@@ -1175,6 +1181,7 @@ if correlation_results:
         print(f"{result['test_transition']:<10} {result['power_transition']:<15} "
             f"{result['phi_expected']:<10} {result['delta_phi_measured']:<10.2f} "
             f"{result['error_deg_phi']:<8.2f} {status}")
+
     
     # Statistical summary
     errors = [r['error_deg_phi'] for r in correlation_results]
