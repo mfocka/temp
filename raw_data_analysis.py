@@ -10,7 +10,7 @@
 # 5. Implement and compare AHRS algorithms for accurate attitude estimation
 # 
 # ## Physical Framework
-# - **Coordinate System**: East(X), Down(Y), North(Z) - So not NED convention
+# - **Coordinate System**: North(X), East(Y), Down(Z) - NED convention
 # - **Accelerometer**: Measures specific force (gravity + linear acceleration)
 # - **Gyroscope**: Measures angular velocity in body frame
 # - **Key Challenge**: Azimuth drift cannot be corrected without magnetometer
@@ -352,24 +352,24 @@ class MultiAngleDetector:
     def calculate_horizontal_angles(self, accel_data: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
         Calculate phi (azimuth) and theta (altitude) from accelerometer data
-        Using consistent coordinate system: East(X), Down(Y), North(Z)
-
+        Using NED coordinate system: North(X), East(Y), Down(Z)
         
         Args:
-            accel_data: Nx3 accelerometer data in g [ax, ay, az]
+            accel_data: Nx3 accelerometer data in g [ax, ay, az] (NED)
             
         Returns:
             phi: Azimuth angles in degrees (rotation around vertical axis)
             theta: Altitude angles in degrees (elevation angle)
-
         """
         ax, ay, az = accel_data[:, 0], accel_data[:, 1], accel_data[:, 2]
         
-        # Azimuth (phi) - rotation around vertical axis (Y-axis in this frame)
-        phi = np.degrees(np.arctan2(ax, az))
+        # Azimuth (phi) - rotation around vertical axis (Z-axis in NED)
+        # phi = atan2(East, North) = atan2(ay, ax)
+        phi = np.degrees(np.arctan2(ay, ax))
         
         # Altitude (theta) - elevation angle from horizontal plane
-        theta = np.degrees(np.arctan2(-ay, np.sqrt(ax**2 + az**2)))
+        # theta = atan2(-Down, sqrt(North^2 + East^2)) = atan2(-az, sqrt(ax^2 + ay^2))
+        theta = np.degrees(np.arctan2(-az, np.sqrt(ax**2 + ay**2)))
         
         return phi, theta
     
@@ -623,6 +623,80 @@ def visualize_angle_changes(accel_data: np.ndarray, timestamps: np.ndarray,
     else:
         print(f"\nNo significant angle changes detected in Test {test_id}")
 
+def generate_expected_changes_for_segment(segment: dict, segments: list, segment_idx: int) -> list:
+    """
+    Generate expected changes based on power state and test configuration
+    
+    Args:
+        segment: Current segment configuration
+        segments: All segments for the file
+        segment_idx: Index of current segment
+        
+    Returns:
+        List of expected change dictionaries with proper timing and angles
+    """
+    expected_changes = []
+    power_state = segment.get('power_state', '')
+    change_time = segment.get('change_time', 0)
+    
+    if power_state == "on":
+        # For "on" tests: expect change within the segment at change_time
+        phi_change = segment.get('phi_change', 0)
+        theta_change = segment.get('theta_change', 0)
+        
+        if phi_change != 0 or theta_change != 0:
+            expected_changes.append({
+                'time': change_time,
+                'delta_phi': phi_change,
+                'delta_theta': theta_change,
+                'type': 'within_segment',
+                'description': f'Angle change at t={change_time}s within segment'
+            })
+    
+    elif power_state == "off":
+        # For "off" tests: expect angle difference from previous segment
+        if segment_idx > 0:
+            prev_segment = segments[segment_idx - 1]
+            phi_change = segment.get('phi_change', 0)
+            theta_change = segment.get('theta_change', 0)
+            
+            if phi_change != 0 or theta_change != 0:
+                expected_changes.append({
+                    'time': 0,  # At start of segment
+                    'delta_phi': phi_change,
+                    'delta_theta': theta_change,
+                    'type': 'segment_transition',
+                    'description': f'Angle change from previous segment'
+                })
+    
+    elif power_state == "off_then_on":
+        # For "off_then_on" tests: expect both transition AND within-segment change
+        if segment_idx > 0:
+            prev_segment = segments[segment_idx - 1]
+            phi_change = segment.get('phi_change', 0)
+            theta_change = segment.get('theta_change', 0)
+            
+            if phi_change != 0 or theta_change != 0:
+                # Transition change
+                expected_changes.append({
+                    'time': 0,  # At start of segment
+                    'delta_phi': phi_change,
+                    'delta_theta': theta_change,
+                    'type': 'segment_transition',
+                    'description': f'Angle change from previous segment'
+                })
+                
+                # Within-segment change
+                expected_changes.append({
+                    'time': change_time,
+                    'delta_phi': phi_change,
+                    'delta_theta': theta_change,
+                    'type': 'within_segment',
+                    'description': f'Angle change at t={change_time}s within segment'
+                })
+    
+    return expected_changes
+
 def compare_with_expected_changes(events: List[AngleChangeEvent], 
                                 expected_changes: List[dict]) -> dict:
     """
@@ -696,9 +770,20 @@ is_edn = True
 
 # %%
 def load_raw_data(file_path, sampling_rate, is_edn):
-    is_edn = True
+    """
+    Load raw sensor data and convert from EDN to NED coordinate system
+    
+    Args:
+        file_path: Path to CSV file
+        sampling_rate: Sampling rate in Hz
+        is_edn: If True, convert from EDN to NED coordinate system
+        
+    Returns:
+        DataFrame with converted sensor data
+    """
     df = pd.read_csv(file_path)
     print(f"Loaded {file_path} with {len(df)} samples")
+    
     # Verify required columns
     required_cols = ["timestamp", "accel_x", "accel_y", "accel_z", "gyro_x", "gyro_y", "gyro_z"]
     missing_cols = [col for col in required_cols if col not in df.columns]
@@ -712,9 +797,35 @@ def load_raw_data(file_path, sampling_rate, is_edn):
     df = df.dropna(subset=required_cols)
 
     if is_edn:
-        # Convert axis from EDN to standard ENU
-        df["accel_y"], df["accel_z"] = -df["accel_y"], -df["accel_z"]
-        df["gyro_y"], df["gyro_z"] = -df["gyro_y"], -df["gyro_z"]   
+        # Convert from EDN (East-Down-North) to NED (North-East-Down) coordinate system
+        # This ensures Az (Z-axis) is aligned with gravity vector
+        # EDN -> NED transformation:
+        # X_EDN -> Y_NED (East -> East)  
+        # Y_EDN -> -Z_NED (Down -> -Down)
+        # Z_EDN -> X_NED (North -> North)
+        
+        # Accelerometer conversion
+        accel_x_ned = df["accel_z"].copy()  # North (Z_EDN -> X_NED)
+        accel_y_ned = df["accel_x"].copy()  # East (X_EDN -> Y_NED)  
+        accel_z_ned = -df["accel_y"].copy() # Down (Y_EDN -> -Z_NED)
+        
+        df["accel_x"] = accel_x_ned
+        df["accel_y"] = accel_y_ned
+        df["accel_z"] = accel_z_ned
+        
+        # Gyroscope conversion (same transformation)
+        gyro_x_ned = df["gyro_z"].copy()  # North
+        gyro_y_ned = df["gyro_x"].copy()  # East
+        gyro_z_ned = -df["gyro_y"].copy() # Down
+        
+        df["gyro_x"] = gyro_x_ned
+        df["gyro_y"] = gyro_y_ned
+        df["gyro_z"] = gyro_z_ned
+        
+        print("Converted from EDN to NED coordinate system")
+        print("  X-axis: North (gravity-aligned)")
+        print("  Y-axis: East") 
+        print("  Z-axis: Down")
 
     print(f"Data loaded: {len(df)} samples")
     print(f"Time range: {df['timestamp'].min():.3f} to {df['timestamp'].max():.3f} seconds")
@@ -833,9 +944,9 @@ for file_path, segments in segmented.items():
 # %% [markdown]
 # ## 4. Attitude Calculation from Accelerometer
 # 
-# **Mathematical Framework**:
-# - Roll: φ = atan2(a_y, a_z) 
-# - Pitch: θ = atan2(-a_x, √(a_y² + a_z²))
+# **Mathematical Framework** (NED coordinate system):
+# - Azimuth: φ = atan2(a_y, a_x) where a_y=East, a_x=North
+# - Altitude: θ = atan2(-a_z, √(a_x² + a_y²)) where a_z=Down
 # - Yaw: Cannot be determined from accelerometer alone (requires magnetometer or integration)
 # 
 # **Limitations**: Only valid when linear acceleration ≈ 0
@@ -843,22 +954,20 @@ for file_path, segments in segmented.items():
 # %%
 def accel_to_attitude(accel_g: np.ndarray) -> np.ndarray:
     """Calculate roll and pitch from accelerometer data
-        Using consistent coordinate system: East(X), Down(Y), North(Z)
-
+    Using NED coordinate system: North(X), East(Y), Down(Z)
+    
     Args:
-        accel_g: Nx3 array of accelerometer data in g [ax, ay, az]
-
+        accel_g: Nx3 array of accelerometer data in g [ax, ay, az] (NED)
     Returns:
         Nx3 array of [roll, pitch, yaw] in degrees (yaw=0)
         Note: roll=phi (azimuth), pitch=theta (altitude) in this context
-
     """
     ax, ay, az = accel_g[:, 0], accel_g[:, 1], accel_g[:, 2]
     
     # Roll (phi/azimuth) and pitch (theta/altitude) from accelerometer
     # Consistent with MultiAngleDetector.calculate_horizontal_angles()
-    roll = np.arctan2(ax, az)  # Azimuth around vertical axis
-    pitch = np.arctan2(-ay, np.sqrt(ax**2 + az**2))  # Altitude/elevation
+    roll = np.arctan2(ay, ax)  # Azimuth: atan2(East, North)
+    pitch = np.arctan2(-az, np.sqrt(ax**2 + ay**2))  # Altitude: atan2(-Down, sqrt(North^2 + East^2))
     yaw = np.zeros_like(roll)  # Cannot determine from accelerometer alone
     
     return np.column_stack([np.degrees(roll), np.degrees(pitch), np.degrees(yaw)])
@@ -925,16 +1034,19 @@ def analyze_all_segments_with_multi_angle_detection(segmented_data: dict,
             # Detect angle changes in this segment
             events = detector.analyze_test_sequence(analysis['accel_g'], timestamps)
             
+            # Generate expected changes based on power state
+            expected_changes = generate_expected_changes_for_segment(segment, segments, i)
+            
+            # Compare with expected changes
+            comparison = compare_with_expected_changes(events, expected_changes)
+            
             # Visualize results
             visualize_angle_changes(analysis['accel_g'], timestamps, events, str(test_id))
-            
-            # Compare with expected if configuration exists
-            expected_changes = segment.get('config', {}).get('expected_changes', [])
-            comparison = compare_with_expected_changes(events, expected_changes)
             
             segment_result = {
                 'test_id': test_id,
                 'detected_events': events,
+                'expected_changes': expected_changes,
                 'comparison': comparison,
                 'segment_config': segment.get('config', {})
             }
