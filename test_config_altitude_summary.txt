@@ -1,0 +1,26 @@
+============================================================
+MOTION ESTIMATOR ANALYSIS SUMMARY
+============================================================
+
+Total Tests              : 5
+Altitude Mean Error      : 5.449951599813767
+Altitude Std Error       : 6.365758904078273
+Altitude Max Error       : 16.11011302870763
+Detection Rate           : 20.0
+False Positive Rate      : 0.0
+
+============================================================
+RELIABILITY RANGES
+============================================================
+
+Error < 1.0°:
+  Angle Range: 5.0 - 5.0 deg
+  DPS Range: 37315.1 - 37315.1 dps
+
+Error < 2.0°:
+  Angle Range: 0.0 - 5.0 deg
+  DPS Range: 37310.8 - 37315.1 dps
+
+Error < 5.0°:
+  Angle Range: 0.0 - 10.2 deg
+  DPS Range: 37310.8 - 37315.1 dps
