@@ -15,7 +15,7 @@ csv = Path('raw_data_output_altitude.csv')
 
 # config_file = Path('test_config_azimuth.json')
 # csv = Path('raw_data_output_azimuth.csv')
-use_edn = True
+use_wds_mapping = True
 fs = 104
 
 # %%
@@ -59,6 +59,18 @@ def edn_to_ned(df: pd.DataFrame) -> pd.DataFrame:
     )
     return df
 
+def wds_to_enu(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    wx, wy, wz = df["accel_x"].to_numpy(), df["accel_y"].to_numpy(), df["accel_z"].to_numpy()
+    df["accel_x"] = -wx
+    df["accel_y"] = -wz
+    df["accel_z"] = -wy
+    gx, gy, gz = df["gyro_x"].to_numpy(), df["gyro_y"].to_numpy(), df["gyro_z"].to_numpy()
+    df["gyro_x"] = -gx
+    df["gyro_y"] = -gz
+    df["gyro_z"] = -gy
+    return df
+
 
 def regularize_timestamps(ts: np.ndarray, fs: float) -> np.ndarray:
     current = float(ts[0])
@@ -99,53 +111,107 @@ def map_segments_to_config(df: pd.DataFrame, config: dict) -> list[dict]:
     	})
     return segments
 
-def process_segment_with_estimator(segment_data: pd.DataFrame, estimator: MotionEstimator) -> pd.DataFrame:
-    """Process a segment through the MotionEstimator"""
+def process_segment_with_estimator(segment_data: pd.DataFrame, estimator: MotionEstimator, fs: float = 104.0) -> pd.DataFrame:
     results = []
-    
+    estimator.reset_calibration()
+    cal_needed = 1040
+    cal_count = 0
     for i, row in segment_data.iterrows():
-        # Convert from mg to g for consistency with MotionEstimator
-        accel_raw = [row["accel_x"], row["accel_y"], row["accel_z"]]  # Already in mg
-        gyro_raw = [row["gyro_x"], row["gyro_y"], row["gyro_z"]]      # Already in dps
-        
+        accel_raw = [row["accel_x"], row["accel_y"], row["accel_z"]]
+        gyro_raw = [row["gyro_x"], row["gyro_y"], row["gyro_z"]]
+        if not estimator.is_ready() and cal_count < cal_needed:
+            estimator.add_calibration_sample(accel_raw, gyro_raw)
+            cal_count += 1
+            continue
         output = estimator.update(accel_raw, gyro_raw, row["timestamp"])
         output["sample_idx"] = i
         results.append(output)
-    
     return pd.DataFrame(results)
 
-def detect_angle_changes(segment_df: pd.DataFrame, config: dict, fs: float = 104.0) -> dict:
-    """Detect angle changes in processed segment data"""
-    change_time = config['change_time'] * 104
-    n_samples = len(segment_df)
-    time_passed = int(change_time * 0.1)
-    
-    # Calculate mean angles in stable regions
-    start_angles = segment_df.iloc[change_time-time_passed: change_time+time_passed][["pitch_deg", "yaw_deg", "roll_deg"]].abs().max()
-    # end_angles = segment_df.iloc[change_time+2*time_passed:stable_end][["pitch_deg", "yaw_deg", "roll_deg"]].mean()
-    
-    print(segment_df.head())
-    # Calculate changes
-    detected_changes = {
-    	"theta_change": start_angles["pitch_deg"],
-    	"phi_change": start_angles["yaw_deg"],
-    	"psi_change": start_angles["roll_deg"]
+def _compute_change_metrics(signal: np.ndarray, change_time_s: float, fs: float = 104.0) -> dict:
+    n = len(signal)
+    if n == 0:
+        return {"angle_delta": 0.0, "avg_dps": 0.0, "max_dps": 0.0}
+    win = max(3, int(0.5 * fs))
+    kernel = np.ones(win) / win
+    smooth = np.convolve(signal, kernel, mode="same")
+    deriv = np.gradient(smooth) * fs
+    ct = int(change_time_s * fs)
+    w = int(3.0 * fs)
+    s0 = max(0, ct - w)
+    s1 = min(n, ct + w)
+    if s1 - s0 < 5:
+        s0, s1 = 0, n
+    local = np.abs(deriv[s0:s1])
+    if local.size == 0:
+        return {"angle_delta": 0.0, "avg_dps": 0.0, "max_dps": 0.0}
+    peak_local_idx = int(np.argmax(local))
+    peak_idx = s0 + peak_local_idx
+    peak_dps = float(local[peak_local_idx])
+    thr = max(0.15 * peak_dps, 1.0)
+    onset = s0
+    for i in range(peak_idx, s0, -1):
+        if np.all(np.abs(deriv[max(s0, i-5):i]) < thr):
+            onset = i
+            break
+    offset = s1 - 1
+    for i in range(peak_idx, s1 - 5):
+        if np.all(np.abs(deriv[i:i+5]) < thr):
+            offset = i
+            break
+    pre_end = max(0, onset - int(0.2 * fs))
+    pre_start = max(0, pre_end - int(1.0 * fs))
+    post_start = min(n, offset + int(0.2 * fs))
+    post_end = min(n, post_start + int(1.0 * fs))
+    base = float(np.mean(smooth[pre_start:pre_end])) if pre_end > pre_start else float(smooth[max(0, onset - int(1.0*fs)):onset].mean()) if onset > int(1.0*fs) else float(smooth[:max(1, onset)].mean())
+    plat = float(np.mean(smooth[post_start:post_end])) if post_end > post_start else float(smooth[offset:min(n, offset+int(1.0*fs))].mean())
+    angle_delta = abs(plat - base)
+    move_time_s = max(1.0 / fs, (offset - onset) / fs)
+    avg_dps = angle_delta / move_time_s
+    max_dps = float(np.max(local))
+    return {
+        "angle_delta": float(angle_delta),
+        "avg_dps": float(avg_dps),
+        "max_dps": float(max_dps),
+        "onset_idx": int(onset),
+        "offset_idx": int(offset),
+        "baseline": float(base),
+        "plateau": float(plat),
+        "peak_idx": int(peak_idx),
+        "peak_dps": float(peak_dps),
     }
 
-    return detected_changes
+def detect_angle_changes(segment_df: pd.DataFrame, config: dict, fs: float = 104.0) -> dict:
+    change_time_s = float(config['change_time'])
+    yaw_metrics = _compute_change_metrics(segment_df["yaw_deg"].to_numpy(), change_time_s, fs) if "yaw_deg" in segment_df.columns else {"angle_delta": 0.0, "avg_dps": 0.0, "max_dps": 0.0}
+    pitch_metrics = _compute_change_metrics(segment_df["pitch_deg"].to_numpy(), change_time_s, fs) if "pitch_deg" in segment_df.columns else {"angle_delta": 0.0, "avg_dps": 0.0, "max_dps": 0.0}
+    roll_metrics = _compute_change_metrics(segment_df["roll_deg"].to_numpy(), change_time_s, fs) if "roll_deg" in segment_df.columns else {"angle_delta": 0.0, "avg_dps": 0.0, "max_dps": 0.0}
+    return {
+        "theta_change": pitch_metrics["angle_delta"],
+        "phi_change": yaw_metrics["angle_delta"],
+        "psi_change": roll_metrics["angle_delta"],
+        "theta_dps": pitch_metrics["avg_dps"],
+        "phi_dps": yaw_metrics["avg_dps"],
+        "theta_max_dps": pitch_metrics["max_dps"],
+        "phi_max_dps": yaw_metrics["max_dps"],
+        "_pitch_metrics": pitch_metrics,
+        "_yaw_metrics": yaw_metrics,
+        "_roll_metrics": roll_metrics,
+    }
 def analyze_segment_errors(segment: dict, estimator: MotionEstimator, fs: float = 104) -> dict:
     """Analyze errors for a single segment"""
     test_config = segment["config"]
 
-    processed_df = process_segment_with_estimator(segment["data"], estimator)
+    processed_df = process_segment_with_estimator(segment["data"], estimator, fs)
     detected = detect_angle_changes(processed_df, test_config, fs)
-    detected['max_dps'] = segment["data"][["gyro_x", "gyro_y", "gyro_z"]].max().max()
+    detected['max_dps_raw'] = float(segment["data"][ ["gyro_x", "gyro_y", "gyro_z"] ].abs().max().max())
 
     detection_threshold = 2.0  # degrees
     result = {
         "test_id": segment["test_id"],
         "description": test_config.get("description", ""),
-        "max_dps": detected["max_dps"],
+        "max_dps": detected.get("phi_max_dps", detected.get("theta_max_dps", 0.0)),
+        "max_dps_raw": detected["max_dps_raw"],
         "expected_detectable": test_config.get("expected_detectable", True),
         "processed_data": processed_df
     }
@@ -161,6 +227,7 @@ def analyze_segment_errors(segment: dict, estimator: MotionEstimator, fs: float 
         result.update({
             "expected_theta": expected_theta,
             "detected_theta": detected["theta_change"],
+            "detected_theta_dps": detected.get("theta_dps", 0.0),
             "theta_error": theta_error,
             "theta_detected": theta_detected,
         })
@@ -173,6 +240,7 @@ def analyze_segment_errors(segment: dict, estimator: MotionEstimator, fs: float 
         result.update({
             "expected_phi": expected_phi,
             "detected_phi": detected["phi_change"],
+            "detected_phi_dps": detected.get("phi_dps", 0.0),
             "phi_error": phi_error,
             "phi_detected": phi_detected,
         })
@@ -191,8 +259,8 @@ df = load_dataframe(csv)
 df.head()
 
 # %%
-if use_edn:
-    df = edn_to_ned(df)
+if use_wds_mapping:
+    df = wds_to_enu(df)
 
 df.head() 
 
@@ -220,7 +288,7 @@ for segment in segments:
     print(f"\nProcessing segment {segment['test_id']}: {segment['config'].get('description', '')}")
     
     # Process segment
-    result = analyze_segment_errors(segment, estimator)
+    result = analyze_segment_errors(segment, estimator, fs)
 
     # Store processed data separately
     if result is not None:
@@ -235,32 +303,25 @@ for segment in segments:
 results_df = pd.DataFrame(results)
 
 # %%
-    for k,d in processed_data_dict.items():
-        if 'phi_change' in segments[k]['config'].keys():
-            change_time = segments[k]['config']['change_time']
-            change = segments[k]['config']['phi_change'] if 'phi_change' in segments[k]['config'].keys() else segments[k]['config']['theta_change']
-
-            delay = 10
-
-            angle_before = d['yaw_deg'][(change_time - delay)*104:change_time*104].mean()
-            angle_after = d['yaw_deg'][change_time*104:(change_time + delay)*104].mean()
-
-            angle_delta = int(abs(angle_after-angle_before))
-            plt.plot(d['yaw_deg'], label='yaw')
-        if 'theta_change' in segments[k]['config'].keys():
-            change_time = segments[k]['config']['change_time']
-            change = segments[k]['config']['theta_change'] if 'theta_change' in segments[k]['config'].keys() else segments[k]['config']['theta_change']
-
-            delay = 10
-
-            angle_before = d['pitch_deg'][(change_time - delay)*104:change_time*104].mean()
-            angle_after = d['pitch_deg'][change_time*104:(change_time + delay)*104].mean()
-
-            angle_delta = int(abs(angle_after-angle_before))
-            plt.plot(d['pitch_deg'], label='pitch')
-        plt.axvline(change_time*104, color="r")
-        plt.title(f"Test {k}: change at {change_time} with expected {change} degrees with actual {angle_delta} degrees")
-        plt.legend()
-        plt.show()
+# Visual verification: plot and annotate using computed onset/offset
+for k, d in processed_data_dict.items():
+    cfg = segments[k]['config']
+    change_time = cfg['change_time']
+    if 'phi_change' in cfg:
+        metrics = _compute_change_metrics(d['yaw_deg'].to_numpy(), change_time, fs)
+        angle_delta = metrics['angle_delta']
+        plt.plot(d['yaw_deg'], label='yaw')
+    if 'theta_change' in cfg:
+        metrics = _compute_change_metrics(d['pitch_deg'].to_numpy(), change_time, fs)
+        angle_delta = metrics['angle_delta']
+        plt.plot(d['pitch_deg'], label='pitch')
+    plt.axvline(int(change_time*fs), color='r')
+    if metrics:
+        plt.axvline(metrics['onset_idx'], color='g', linestyle='--', alpha=0.6)
+        plt.axvline(metrics['offset_idx'], color='m', linestyle='--', alpha=0.6)
+    expected = cfg.get('phi_change', cfg.get('theta_change', 0))
+    plt.title(f"Test {k}: expected {expected}°, detected {angle_delta:.2f}°")
+    plt.legend()
+    plt.show()
 
 
