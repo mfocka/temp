@@ -1,0 +1,123 @@
+[
+  {
+    "test_id": 1,
+    "angle_type": "phi",
+    "expected_angle": 5,
+    "detected_angle": -5.485163300841691,
+    "detection_time": 20.369,
+    "is_detected": true,
+    "confidence": 1.0,
+    "dps_used": 30.138259894734798,
+    "angle_magnitude": 5
+  },
+  {
+    "test_id": 3,
+    "angle_type": "phi",
+    "expected_angle": 5,
+    "detected_angle": -5.485163300841691,
+    "detection_time": 20.369,
+    "is_detected": true,
+    "confidence": 1.0,
+    "dps_used": 30.138259894734798,
+    "angle_magnitude": 5
+  },
+  {
+    "test_id": 4,
+    "angle_type": "phi",
+    "expected_angle": 10,
+    "detected_angle": -5.509583973324368,
+    "detection_time": 15.462,
+    "is_detected": true,
+    "confidence": 1.0,
+    "dps_used": 30.27243941387009,
+    "angle_magnitude": 10
+  },
+  {
+    "test_id": 5,
+    "angle_type": "phi",
+    "expected_angle": 10,
+    "detected_angle": -5.509583973324368,
+    "detection_time": 15.462,
+    "is_detected": true,
+    "confidence": 1.0,
+    "dps_used": 30.27243941387009,
+    "angle_magnitude": 10
+  },
+  {
+    "test_id": 6,
+    "angle_type": "phi",
+    "expected_angle": 15,
+    "detected_angle": -5.509583973324368,
+    "detection_time": 15.462,
+    "is_detected": true,
+    "confidence": 1.0,
+    "dps_used": 30.27243941387009,
+    "angle_magnitude": 15
+  },
+  {
+    "test_id": 7,
+    "angle_type": "phi",
+    "expected_angle": 15,
+    "detected_angle": -5.509583973324368,
+    "detection_time": 15.462,
+    "is_detected": true,
+    "confidence": 1.0,
+    "dps_used": 30.27243941387009,
+    "angle_magnitude": 15
+  },
+  {
+    "test_id": 8,
+    "angle_type": "phi",
+    "expected_angle": 5,
+    "detected_angle": -5.509583973324368,
+    "detection_time": 15.462,
+    "is_detected": true,
+    "confidence": 1.0,
+    "dps_used": 30.27243941387009,
+    "angle_magnitude": 5
+  },
+  {
+    "test_id": 9,
+    "angle_type": "phi",
+    "expected_angle": 5,
+    "detected_angle": -5.509583973324368,
+    "detection_time": 15.462,
+    "is_detected": true,
+    "confidence": 1.0,
+    "dps_used": 30.27243941387009,
+    "angle_magnitude": 5
+  },
+  {
+    "test_id": 10,
+    "angle_type": "phi",
+    "expected_angle": 4,
+    "detected_angle": -5.509583973324368,
+    "detection_time": 15.462,
+    "is_detected": true,
+    "confidence": 1.0,
+    "dps_used": 30.27243941387009,
+    "angle_magnitude": 4
+  },
+  {
+    "test_id": 11,
+    "angle_type": "phi",
+    "expected_angle": 3,
+    "detected_angle": -5.509583973324368,
+    "detection_time": 15.462,
+    "is_detected": true,
+    "confidence": 1.0,
+    "dps_used": 30.27243941387009,
+    "angle_magnitude": 3
+  },
+  {
+    "test_id": 12,
+    "angle_type": "phi",
+    "expected_angle": 2,
+    "detected_angle": -5.509583973324368,
+    "detection_time": 15.462,
+    "is_detected": true,
+    "confidence": 1.0,
+    "dps_used": 30.27243941387009,
+    "angle_magnitude": 2
+  }
+]
