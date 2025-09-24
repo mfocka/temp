@@ -105,21 +105,20 @@ def process_segment_with_estimator(segment_data: pd.DataFrame, estimator: Motion
 
 def detect_angle_changes(segment_df: pd.DataFrame, config: dict, fs: float = 104.0) -> dict:
     """Detect angle changes in processed segment data"""
-    # Get stable regions (first and last 20% of data)
+    change_time = config['change_time'] * 104
     n_samples = len(segment_df)
-    stable_start = int(n_samples * 0.1)
-    stable_end = int(n_samples * 0.9)
+    time_passed = int(change_time * 0.1)
     
     # Calculate mean angles in stable regions
-    start_angles = segment_df.iloc[:stable_start][["pitch_deg", "yaw_deg", "roll_deg"]].mean()
-    end_angles = segment_df.iloc[stable_end:][["pitch_deg", "yaw_deg", "roll_deg"]].mean()
+    start_angles = segment_df.iloc[change_time-time_passed: change_time+time_passed][["pitch_deg", "yaw_deg", "roll_deg"]].abs().max()
+    # end_angles = segment_df.iloc[change_time+2*time_passed:stable_end][["pitch_deg", "yaw_deg", "roll_deg"]].mean()
     
+    print(segment_df.head())
     # Calculate changes
     detected_changes = {
-        "theta_change": end_angles["pitch_deg"] - start_angles["pitch_deg"],
-        "phi_change": end_angles["yaw_deg"] - start_angles["yaw_deg"],
-        "psi_change": end_angles["roll_deg"] - start_angles["roll_deg"],
-        "max_dps": segment_df[["pitch_deg", "yaw_deg", "roll_deg"]].diff().abs().max().max() * fs
+    	"theta_change": start_angles["pitch_deg"],
+    	"phi_change": start_angles["yaw_deg"],
+    	"psi_change": start_angles["roll_deg"]
     }
 
     return detected_changes
@@ -130,6 +129,7 @@ def analyze_segment_errors(segment: dict, estimator: MotionEstimator, fs: float 
 
     processed_df = process_segment_with_estimator(segment["data"], estimator)
     detected = detect_angle_changes(processed_df, test_config, fs)
+    detected['max_dps'] = segment["data"][["gyro_x", "gyro_y", "gyro_z"]].max().max()
 
     detection_threshold = 2.0  # degrees
     result = {
@@ -397,8 +397,13 @@ def generate_analysis_report(results_df: pd.DataFrame, processed_data_dict: dict
     
     # Plot frequency spectrum for first segment as example
     if segments:
-        plot_frequency_for_segment(raw_df, segments[0], "gyro_x")
+        plot_frequency_for_segment(raw_df, segments[2], "gyro_x")
+        plot_frequency_for_segment(raw_df, segments[2], "gyro_y")
+        plot_frequency_for_segment(raw_df, segments[2], "gyro_z")
     
+        plot_frequency_for_segment(raw_df, segments[2], "accel_x")
+        plot_frequency_for_segment(raw_df, segments[2], "accel_y")
+        plot_frequency_for_segment(raw_df, segments[2], "accel_z")
     # Generate summary statistics
     # summary = calculate_summary_statistics(results_df)
     # print_summary(summary)
@@ -609,8 +614,8 @@ def plot_expected_vs_detected_bar(results_df, segments=None):
     if "expected_theta" in results_df.keys():
         ax = axes[axes_id]
         axes_id += 1
-        ax.bar(x - width/2, results_df["expected_theta"], width, label='Expected', alpha=0.7)
-        ax.bar(x + width/2, results_df["detected_theta"], width, label='Detected', alpha=0.7)
+        ax.bar(x - width/2, abs(results_df["expected_theta"]), width, label='Expected', alpha=0.7)
+        ax.bar(x + width/2, abs(results_df["detected_theta"]), width, label='Detected', alpha=0.7)
         ax.set_xlabel('Test ID')
         ax.set_ylabel('Angle (deg)')
         ax.set_title('Altitude (Theta) Changes')
@@ -623,8 +628,8 @@ def plot_expected_vs_detected_bar(results_df, segments=None):
     if "expected_phi" in results_df.keys():
         ax = axes[axes_id]
         axes_id += 1
-        ax.bar(x - width/2, results_df["expected_phi"], width, label='Expected', alpha=0.7)
-        ax.bar(x + width/2, results_df["detected_phi"], width, label='Detected', alpha=0.7)
+        ax.bar(x - width/2, abs(results_df["expected_phi"]), width, label='Expected', alpha=0.7)
+        ax.bar(x + width/2, abs(results_df["detected_phi"]), width, label='Detected', alpha=0.7)
         ax.set_xlabel('Test ID')
         ax.set_ylabel('Angle (deg)')
         ax.set_title('Azimuth (Phi) Changes')
@@ -712,8 +717,10 @@ def plot_segment_filters(segment_data, segment_info, motion_estimator, expected_
     
     return processed_df
 def main(argv=None) -> int:
-    config_file = Path('test_config_altitude.json')
-    csv = Path('raw_data_output_altitude.csv')
+    # config_file = Path('test_config_altitude.json')
+    # csv = Path('raw_data_output_altitude.csv')
+    config_file = Path('test_config_azimuth.json')
+    csv = Path('raw_data_output_azimuth.csv')
     use_edn = True
     fs = 104
     

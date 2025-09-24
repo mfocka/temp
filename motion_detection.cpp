@@ -1028,8 +1028,6 @@ void MotionDetection::_checkAndApplyPeriodicReset()
 
 void MotionDetection::_synchronizedEstimatorReset()
 {
-    // TODO: Is this safe to do?
-    _reference_quat = _current_quat;
     if (!_motion_estimator) return;
     
     // Get current MotionDI euler angles

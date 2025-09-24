@@ -348,18 +348,8 @@ void MotionEstimator::_combineFilters(Output& output)
     // - Azimuth (yaw): Simple filter works better but can be noisy
     // - Tilt (pitch/roll): Complementary filter has less drift
     
-    // Yaw: Use simple filter as primary, but validate with complementary filter
-    output.yaw_deg = _simple_yaw_deg;
-    
-    // Check if complementary filter shows significant change
-    float yaw_diff = fabsf(_comp_yaw_deg - _prev_yaw_deg);
-    if (yaw_diff < 10.0f) { // Small change threshold
-        // If complementary filter shows small change, trust simple filter
-        output.yaw_deg = _simple_yaw_deg;
-    } else {
-        // If complementary filter shows large change, use weighted average
-        output.yaw_deg = 0.6f * _simple_yaw_deg + 0.4f * _comp_yaw_deg;
-    }
+    // Yaw: slow change
+    output.yaw_deg = 0.6f * _simple_yaw_deg + 0.4f * _prev_yaw_deg;
     
     // Pitch and Roll: Use complementary filter as primary (less drift)
     output.pitch_deg = _comp_pitch_deg;
