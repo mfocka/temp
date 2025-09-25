@@ -156,6 +156,9 @@ class VisualizationEngine:
         
         # Filter data tab
         self.setup_filter_charts()
+
+        # Events tab
+        self.setup_events_tab()
         
         # Quaternion tab
         self.setup_quaternion_charts()
@@ -222,13 +225,14 @@ class VisualizationEngine:
         toolbar.update()
         
         # Create subplots for different filters
-        self.filter_axes = self.filter_fig.subplots(2, 2, sharex=True)
-        self.filter_fig.suptitle('Filter Outputs')
+        self.filter_axes = self.filter_fig.subplots(3, 2, sharex=True)
+        self.filter_fig.suptitle('Filter Outputs (including Resulting Angle)')
         
         filter_types = ['DI', 'SI', 'CO', 'FU']
         filter_names = ['MotionDI', 'Simple Integration', 'Complementary', 'Fused']
         
         self.filter_lines = {}
+        # 4 filter plots in rows 0-1, and resulting angle in row 2 spanning both columns
         for i, (filter_type, name) in enumerate(zip(filter_types, filter_names)):
             row, col = i // 2, i % 2
             ax = self.filter_axes[row, col]
@@ -243,6 +247,16 @@ class VisualizationEngine:
                 self.filter_lines[key] = ax.plot([], [], 
                     color=['red', 'green', 'blue'][j], linewidth=1)[0]
         
+        # Add resulting angle plot (magnitude of pitch/yaw/roll) for fused output
+        self.resulting_ax = self.filter_axes[2, 0]
+        self.resulting_ax2 = self.filter_axes[2, 1]
+        for ax in (self.resulting_ax, self.resulting_ax2):
+            ax.set_title('Resulting Angle (deg)')
+            ax.set_ylabel('Angle (degrees)')
+            ax.grid(True, alpha=0.3)
+        self.resulting_line = self.resulting_ax.plot([], [], color='magenta', linewidth=1)[0]
+        self.resulting_line2 = self.resulting_ax2.plot([], [], color='magenta', linewidth=1)[0]
+
         self.charts['filter'] = {
             'figure': self.filter_fig,
             'canvas': self.filter_canvas,
@@ -284,6 +298,43 @@ class VisualizationEngine:
             'axes': self.quat_ax,
             'lines': self.quat_lines
         }
+
+    def setup_events_tab(self):
+        """Setup events tab showing raised/cleared timeline."""
+        frame = ttk.Frame(self.chart_notebook)
+        self.chart_notebook.add(frame, text="Events")
+
+        # Table
+        columns = ('Time (s)', 'Event', 'Action', 'Details')
+        self.events_table = ttk.Treeview(frame, columns=columns, show='headings', height=10)
+        for col in columns:
+            self.events_table.heading(col, text=col)
+            self.events_table.column(col, width=160)
+        self.events_table.pack(side='top', fill='x', padx=5, pady=5)
+
+        # Timeline figure
+        self.events_fig = Figure(figsize=(12, 3), dpi=100)
+        self.events_canvas = FigureCanvasTkAgg(self.events_fig, frame)
+        self.events_canvas.get_tk_widget().pack(fill='both', expand=True)
+        self.events_ax = self.events_fig.subplots(1, 1)
+        self.events_ax.set_title('Events Timeline')
+        self.events_ax.set_xlabel('Time (s)')
+        self.events_ax.set_ylabel('State (0=Cleared, 1=Raised)')
+        self.events_ax.grid(True, alpha=0.3)
+        self.events_scatter = self.events_ax.plot([], [], 'o', color='#f4c430', markersize=4)[0]
+        self.events_data = []  # List of tuples (t, name, action, details)
+
+    def add_event(self, t: float, name: str, action: str, details: str = ""):
+        """Add event to table and timeline."""
+        self.events_data.append((t, name, action, details))
+        self.events_table.insert('', 'end', values=(f"{t:.3f}", name, action, details))
+        # Update timeline
+        xs = [e[0] for e in self.events_data]
+        ys = [1.0 if e[2].lower().startswith('raise') else 0.0 for e in self.events_data]
+        self.events_scatter.set_data(xs, ys)
+        self.events_ax.relim()
+        self.events_ax.autoscale_view()
+        self.events_canvas.draw_idle()
         
     def setup_angles(self, parent):
         """Setup circular gauges for angle display."""
@@ -479,6 +530,22 @@ class VisualizationEngine:
             ax.relim()
             ax.autoscale_view()
         
+        # Compute resulting angle from Fused (if available)
+        fused = self.data_buffers['ANGLES_FU']
+        if fused['time']:
+            import numpy as np
+            t = fused['time']
+            pitch = np.asarray(fused['pitch'], dtype=float)
+            yaw = np.asarray(fused['yaw'], dtype=float)
+            roll = np.asarray(fused['roll'], dtype=float)
+            res = np.sqrt(pitch * pitch + yaw * yaw + roll * roll)
+            self.resulting_line.set_data(t, res)
+            self.resulting_line2.set_data(t, res)
+            # Autoscale
+            for ax in (self.resulting_ax, self.resulting_ax2):
+                ax.relim()
+                ax.autoscale_view()
+
         self.charts['filter']['canvas'].draw_idle()
     
     def update_quaternion_charts(self):

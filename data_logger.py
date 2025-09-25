@@ -117,7 +117,7 @@ class DataLogger:
         
         try:
             # Ensure file exists and has proper headers
-            if file_path not in self.current_files:
+            if data_type not in self.current_files or file_path not in self.file_handles:
                 self._create_file(file_path, data_type)
                 
             # Write data to CSV
@@ -143,7 +143,7 @@ class DataLogger:
     def _create_file(self, file_path: Path, data_type: str):
         """Create new CSV file with headers."""
         try:
-            # Create file handle
+            # Create file handle (truncate on first create; we keep handle open to append)
             file_handle = open(file_path, 'w', newline='', encoding='utf-8')
             self.file_handles[file_path] = file_handle
             

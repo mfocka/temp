@@ -58,8 +58,7 @@ class SerialInterface:
                 baudrate=baud_rate,
             )
             
-            print(self.serial_connection)
-            print(self.serial_connection.is_open)
+            # Quiet console prints
             
             # Wait for connection to stabilize
             time.sleep(0.5)
@@ -106,7 +105,6 @@ class SerialInterface:
             self.write_command("VERSION")
             # Try to read response
             response = self.read_line()
-            print(response)
             return response is not None and len(response) > 0
             
         except Exception as e:
@@ -155,7 +153,6 @@ class SerialInterface:
         try:
             # Read line with timeout
             line = self.serial_connection.readline()
-            print(line)
             if line:
                 decoded_line = line.decode('utf-8', errors='ignore').strip()
                 if decoded_line:

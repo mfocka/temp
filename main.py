@@ -333,8 +333,6 @@ class ISM330DHCXTool:
             
         if self.is_connected:
             response = self.command_interface.send_command(self.serial_interface, command)
-            print(f"Command: {command}")
-            print(f"Response: {response}")
         else:
             messagebox.showerror("Error", "Not connected to sensor")
             
@@ -368,6 +366,17 @@ class ISM330DHCXTool:
                             if self.logging_var.get():
                                 self.data_logger.log_data(parsed_data)
                                 
+                            # If ANGLES state changes, add event to Events tab
+                            if parsed_data and parsed_data.get('type') == 'ANGLES':
+                                try:
+                                    state = parsed_data['data'].state
+                                    # Derive action as raised/cleared for visualization purposes
+                                    action = 'RAISED' if state and state.upper() != 'CLEARED' else 'CLEARED'
+                                    # Use a generic event name
+                                    self.visualization.add_event(parsed_data['timestamp'], 'ANGLES_STATE', action, state)
+                                except Exception:
+                                    pass
+
                             # Update status
                             self.root.after(0, self.update_data_count)
                             

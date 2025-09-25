@@ -1,3 +1,8 @@
+2025-09-25 visualizer fixes (existing Tk-based app)
+- Added resulting angle to Filter Outputs page (computed from Fused pitch/yaw/roll).
+- Quieted console prints in `serial_interface.py` and `main.py` (no stdout spam).
+- Improved logger file handle tracking to avoid header duplication.
+- Documented Events tab derived from ANGLES state transitions.
 MEMS Visualizer Tooling Updates
 ===============================
 

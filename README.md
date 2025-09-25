@@ -42,7 +42,7 @@ Based on the firmware output, the tool supports:
 
 ### Visual Components
 - **Angle Displays**: Circular gauges for azimuth, altitude, and zenith angles
-- **Line Charts**: Time-series plots for all sensor data
+- **Line Charts**: Time-series plots for all sensor data, including a resulting angle plot on Filter Outputs (√(pitch²+yaw²+roll²) from Fused)
 - **State Monitoring**: Real-time display of motion detection state (MONITORING, CALIBRATING, etc.)
 - **Data Table**: Tabular view of current sensor values
 
@@ -208,9 +208,10 @@ Monitor the system state:
 - **Parity**: None
 
 ### Data Visualization
-- **Chart Update Rate**: 10 Hz (configurable)
+- **Chart Update Rate**: 10 Hz (configurable); internal batching to keep UI fast
 - **Data Buffer Size**: 1000 samples per chart
 - **Angle Display Range**: 0-360° for azimuth, 0-180° for altitude/zenith
+- **Events Tab**: Shows event raised/cleared timeline derived from ANGLES state transitions
 
 ### File Output
 - **Log Directory**: `./logs/` (configurable)
