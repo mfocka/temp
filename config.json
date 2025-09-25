@@ -1,0 +1,68 @@
+{
+  "serial": {
+    "default_port": "",
+    "default_baud_rate": 115200,
+    "timeout": 1.0,
+    "auto_connect": false,
+    "auto_reconnect": true,
+    "reconnect_delay": 5.0
+  },
+  "data": {
+    "max_buffer_size": 1000,
+    "update_rate_hz": 10,
+    "enable_logging": true,
+    "log_directory": "./logs",
+    "max_file_size_mb": 10,
+    "retention_days": 7,
+    "auto_export": false,
+    "export_interval_minutes": 60
+  },
+  "visualization": {
+    "chart_theme": "seaborn-v0_8",
+    "chart_dpi": 100,
+    "chart_size": [
+      12,
+      8
+    ],
+    "line_width": 1.0,
+    "grid_alpha": 0.3,
+    "auto_scale": true,
+    "show_legend": true,
+    "gauge_size": 150,
+    "gauge_colors": [
+      "red",
+      "green",
+      "blue"
+    ]
+  },
+  "filter": {
+    "enable_motion_di": true,
+    "enable_simple_integration": true,
+    "enable_complementary": true,
+    "enable_fused": true,
+    "motion_di_alpha": 0.98,
+    "complementary_alpha": 0.98,
+    "fusion_weight": 0.5
+  },
+  "sensor": {
+    "data_mask": 127,
+    "calibration_time": 60,
+    "altitude_threshold": 50,
+    "azimuth_threshold": 100,
+    "validation_time": 240,
+    "collection_time": 10
+  },
+  "ui": {
+    "window_width": 1400,
+    "window_height": 900,
+    "sidebar_width": 300,
+    "theme": "default",
+    "font_family": "Arial",
+    "font_size": 10,
+    "show_toolbar": true,
+    "show_status_bar": true,
+    "remember_window_state": true
+  },
+  "last_updated": "2025-09-25T17:22:56.035887",
+  "version": "1.0"
+}
