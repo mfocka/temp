@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # ISM330DHCX Data Visualization Tool Requirements
 # Core dependencies for serial communication and data processing
 
@@ -26,3 +27,10 @@ matplotlib>=3.5.0,<3.8.0
 # Documentation (optional)
 # sphinx>=4.0.0
 # sphinx-rtd-theme>=0.5.0
+=======
+PySide6==6.7.2
+pyqtgraph==0.13.7
+numpy==1.26.4
+pandas==2.2.2
+pyserial==3.5
+>>>>>>> b17ab3c25f5211d52e9ee3fd6ef97380584490b9
