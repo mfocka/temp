@@ -219,6 +219,8 @@ class ISM330DHCXTool:
         self.visualization.setup_charts(self.charts_frame)
         self.visualization.setup_angles(self.angles_frame)
         self.visualization.setup_data_table(self.table_frame)
+        # Start periodic UI update loop (drains queue and redraws)
+        self.visualization.start_update_loop()
         
     def create_status_bar(self):
         """Create status bar at bottom."""
@@ -353,37 +355,31 @@ class ISM330DHCXTool:
         while self.running:
             if self.is_connected and self.is_collecting:
                 try:
-                    # Read data from serial port
-                    data = self.serial_interface.read_line()
-                    if data:
-                        # Parse the data
-                        parsed_data = self.data_parser.parse_line(data)
-                        if parsed_data:
-                            # Update visualization
-                            self.visualization.update_data(parsed_data)
-                            
-                            # Log data if enabled
-                            if self.logging_var.get():
-                                self.data_logger.log_data(parsed_data)
-                                
-                            # If ANGLES state changes, add event to Events tab
-                            if parsed_data and parsed_data.get('type') == 'ANGLES':
-                                try:
-                                    state = parsed_data['data'].state
-                                    # Derive action as raised/cleared for visualization purposes
-                                    action = 'RAISED' if state and state.upper() != 'CLEARED' else 'CLEARED'
-                                    # Use a generic event name
-                                    self.visualization.add_event(parsed_data['timestamp'], 'ANGLES_STATE', action, state)
-                                except Exception:
-                                    pass
+                    # Prefer batch read for performance
+                    lines = self.serial_interface.read_all_available()
+                    if not lines:
+                        # Fall back to single line
+                        single = self.serial_interface.read_line()
+                        if single:
+                            lines = [single]
 
-                            # Update status
-                            self.root.after(0, self.update_data_count)
+                    if lines:
+                        for data in lines:
+                            parsed_data = self.data_parser.parse_line(data)
+                            if parsed_data:
+                                # Enqueue for UI thread to process
+                                self.visualization.update_data(parsed_data)
+                                # Log data if enabled (background thread safe)
+                                if self.logging_var.get():
+                                    self.data_logger.log_data(parsed_data)
+
+                        # Update status (UI thread)
+                        self.root.after(0, self.update_data_count)
                             
                 except Exception as e:
                     print(f"Data processing error: {e}")
                     
-            time.sleep(0.01)  # 100 Hz loop
+            time.sleep(0.001)  # Fast loop; UI throttled by visualization.update_interval
             
     def update_data_count(self):
         """Update data count in status bar."""
