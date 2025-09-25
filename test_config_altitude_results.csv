@@ -1,6 +1,0 @@
-test_id,description,max_dps,expected_detectable,expected_theta,detected_theta,theta_error,theta_detected
-0,Baseline - no movement,5670.0,False,0.0,4.1910553569081355,4.1910553569081355,False
-2,4.7Â° theta rotation (power on),114030.0,True,4.7,4.201404019422146,0.49859598057785437,True
-3,10.2Â° theta rotation (power on),114240.0,True,10.2,6.380529149158094,3.8194708508419053,False
-6,15Â° theta return to 0 (power on),114100.0,True,-15.0,11.741166435673735,26.741166435673733,False
-8,5Â° theta return to 0 (power on),113960.0,True,-5.0,6.718542422463352,11.71854242246335,False
