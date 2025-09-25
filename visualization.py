@@ -459,7 +459,9 @@ class VisualizationEngine:
                 buffer['pitch'].append(data.pitch)
                 buffer['yaw'].append(data.yaw)
                 buffer['roll'].append(data.roll)
-            
+                buffer['altitude'].append(data.altitude)
+                buffer['azimuth'].append(data.azimuth)
+                buffer['zenith'].append(data.zenith)
             # Maintain buffer size
             if len(buffer['time']) > self.max_data_points:
                 for key in buffer:
