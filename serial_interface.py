@@ -19,7 +19,7 @@ class SerialInterface:
         self.is_connected = False
         self.port = None
         self.baud_rate = 115200
-        self.timeout = 0.05
+        self.timeout = 0.001  # Very short timeout for fast reading
         self.logger = logging.getLogger(__name__)
         
         # Data callback for real-time processing
@@ -59,7 +59,11 @@ class SerialInterface:
                 port=port,
                 baudrate=baud_rate,
                 timeout=self.timeout,
-                write_timeout=0.2
+                write_timeout=0.2,
+                # Optimize buffer sizes for high-speed data
+                xonxoff=False,
+                rtscts=False,
+                dsrdtr=False
             )
             
             # Quiet console prints
@@ -206,7 +210,8 @@ class SerialInterface:
             waiting = self.serial_connection.in_waiting
             if waiting <= 0:
                 return []
-            raw = self.serial_connection.read(waiting)
+            # Read up to 64KB at once for better performance
+            raw = self.serial_connection.read(min(waiting, 65536))
             if not raw:
                 return []
             text = raw.decode('utf-8', errors='ignore')
@@ -216,7 +221,7 @@ class SerialInterface:
             parts = text.split('\n')
             if text and not text.endswith('\n'):
                 self._rx_text_buffer = parts.pop()
-            # Strip CR and empties
+            # Strip CR and empties, return immediately for speed
             return [p.strip() for p in parts if p and p.strip()]
         except Exception as e:
             self.logger.error(f"Error fast-reading available data: {e}")

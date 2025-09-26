@@ -76,7 +76,9 @@ class CircularGauge:
         
     def update_value(self, value: float):
         """Update gauge value."""
-        self.current_value = float(value)
+        # Clamp value to valid range
+        value = max(self.min_val, min(self.max_val, float(value)))
+        self.current_value = value
         
         center_x = self.size // 2
         center_y = self.size // 2
@@ -92,20 +94,20 @@ class CircularGauge:
         x = center_x + needle_length * math.cos(angle_rad)
         y = center_y + needle_length * math.sin(angle_rad)
         
-        # Clear previous needle
+        # Clear previous needle and value
         self.canvas.delete("needle")
+        self.canvas.delete("value")
         
         # Draw needle
         self.canvas.create_line(center_x, center_y, x, y, 
                                fill='red', width=3, tags="needle")
         
         # Draw center dot
-        self.canvas.create_oval(center_x - 3, center_y - 3,
-                               center_x + 3, center_y + 3,
-                               fill='red', tags="needle")
+        self.canvas.create_oval(center_x - 5, center_y - 5,
+                               center_x + 5, center_y + 5,
+                               fill='red', outline='darkred', tags="needle")
         
         # Update value display
-        self.canvas.delete("value")
         self.canvas.create_text(center_x, center_y + 20, 
                                text=f"{value:.1f}{self.unit}", 
                                font=('Arial', 12, 'bold'), tags="value")
@@ -119,8 +121,8 @@ class VisualizationEngine:
         self.logger = logging.getLogger(__name__)
         
         # Chart configuration
-        self.max_data_points = 1000
-        self.update_interval = 100  # ms
+        self.max_data_points = 500  # Reduced for better performance at 52Hz
+        self.update_interval = 20  # ms - ~50Hz update rate for 52Hz data
 
         # Relative time baseline (set on first data after reset)
         self.time_zero: Optional[float] = None
@@ -190,16 +192,16 @@ class VisualizationEngine:
         self.data_table = None
 
         # Thread-safe queue for parsed data coming from background thread
-        self.update_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue(maxsize=10000)
+        self.update_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue(maxsize=1000)  # Smaller queue for faster processing
 
         # Track last known ANGLES state to derive events
         self._last_angles_state: Optional[str] = None
 
-        # Throttling settings
+        # Throttling settings for performance
         self._last_table_update_ms: float = 0.0
-        self.table_update_interval_ms: int = 500
+        self.table_update_interval_ms: int = 100  # Faster table updates for 52Hz
         self._last_autoscale_ms: float = 0.0
-        self.autoscale_interval_ms: int = 200
+        self.autoscale_interval_ms: int = 500  # Less frequent autoscaling for performance
         
     def setup_charts(self, parent):
         """Setup line charts for time-series data."""
@@ -524,13 +526,16 @@ class VisualizationEngine:
                 buffer['azimuth'].append(data.azimuth)
                 buffer['zenith'].append(data.zenith)
 
-                # Update gauges
-                if 'azimuth' in self.gauges:
-                    self.gauges['azimuth'].update_value(data.azimuth)
-                if 'altitude' in self.gauges:
-                    self.gauges['altitude'].update_value(data.altitude)
-                if 'zenith' in self.gauges:
-                    self.gauges['zenith'].update_value(data.zenith)
+                # Update gauges with proper values
+                try:
+                    if 'azimuth' in self.gauges and hasattr(data, 'azimuth'):
+                        self.gauges['azimuth'].update_value(float(data.azimuth))
+                    if 'altitude' in self.gauges and hasattr(data, 'altitude'):
+                        self.gauges['altitude'].update_value(float(data.altitude))
+                    if 'zenith' in self.gauges and hasattr(data, 'zenith'):
+                        self.gauges['zenith'].update_value(float(data.zenith))
+                except Exception as e:
+                    self.logger.debug(f"Error updating gauges: {e}")
 
                 # Update state label and raise event if changed
                 self.state_label.config(text=data.state)
@@ -566,8 +571,9 @@ class VisualizationEngine:
     def process_pending_data(self):
         """Drain the pending data queue and update charts and table once."""
         drained = 0
+        max_drain = 100  # Limit to prevent UI freezing
         try:
-            while True:
+            while drained < max_drain:
                 item = self.update_queue.get_nowait()
                 self._apply_parsed_data(item)
                 drained += 1

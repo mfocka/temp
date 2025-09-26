@@ -2,14 +2,14 @@
   "serial": {
     "default_port": "",
     "default_baud_rate": 115200,
-    "timeout": 1.0,
+    "timeout": 0.001,
     "auto_connect": false,
     "auto_reconnect": true,
     "reconnect_delay": 5.0
   },
   "data": {
-    "max_buffer_size": 1000,
-    "update_rate_hz": 10,
+    "max_buffer_size": 500,
+    "update_rate_hz": 52,
     "enable_logging": true,
     "log_directory": "./logs",
     "max_file_size_mb": 10,

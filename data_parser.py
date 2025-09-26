@@ -62,6 +62,10 @@ class DataParser:
         """Initialize data parser."""
         self.logger = logging.getLogger(__name__)
         
+        # Timestamp tracking to ensure monotonic increasing
+        self.last_timestamp = 0.0
+        self.timestamp_offset = 0.0
+        
         # Data storage
         self.data_buffers = {
             'RAW_DATA': [],
@@ -110,7 +114,10 @@ class DataParser:
             if not timestamp_match:
                 return None
                 
-            timestamp = float(timestamp_match.group(1))
+            raw_timestamp = float(timestamp_match.group(1))
+            
+            # Ensure monotonic increasing timestamps
+            timestamp = self._ensure_monotonic_timestamp(raw_timestamp)
             
             # Parse different data types
             if 'RAW_DATA' in line:
@@ -339,6 +346,32 @@ class DataParser:
         """Get total count of all data points."""
         return self.total_data_count
     
+    def _ensure_monotonic_timestamp(self, timestamp: float) -> float:
+        """
+        Ensure timestamp is monotonically increasing.
+        
+        Args:
+            timestamp: Raw timestamp from sensor
+            
+        Returns:
+            Adjusted monotonic timestamp
+        """
+        # If timestamp goes backwards, it might be a reset or wraparound
+        if timestamp < self.last_timestamp:
+            # Check if it's a significant jump backwards (likely a reset)
+            if self.last_timestamp - timestamp > 1000:  # More than 1000 seconds backwards
+                # This is likely a sensor reset, adjust offset
+                self.timestamp_offset = self.last_timestamp + 0.001
+            else:
+                # Small backwards jump, use last timestamp + small increment
+                timestamp = self.last_timestamp + 0.001
+        
+        # Apply offset if needed
+        adjusted_timestamp = timestamp + self.timestamp_offset
+        self.last_timestamp = adjusted_timestamp
+        
+        return adjusted_timestamp
+    
     def clear_data(self, data_type: Optional[str] = None):
         """
         Clear data buffers.
@@ -351,6 +384,9 @@ class DataParser:
                 self.data_buffers[key].clear()
                 self.data_counts[key] = 0
             self.total_data_count = 0
+            # Reset timestamp tracking
+            self.last_timestamp = 0.0
+            self.timestamp_offset = 0.0
         elif data_type in self.data_buffers:
             self.data_buffers[data_type].clear()
             self.data_counts[data_type] = 0

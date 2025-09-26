@@ -180,9 +180,9 @@ class ISM330DHCXTool:
         
         # Chart update rate
         ttk.Label(frame, text="Update Rate (Hz):").grid(row=0, column=0, sticky="w")
-        self.update_rate_var = tk.StringVar(value="10")
+        self.update_rate_var = tk.StringVar(value="50")
         update_rate_combo = ttk.Combobox(frame, textvariable=self.update_rate_var,
-                                       values=["1", "5", "10", "20", "50"], width=10)
+                                       values=["1", "5", "10", "20", "50", "52"], width=10)
         update_rate_combo.grid(row=0, column=1, sticky="ew", padx=(5, 0))
         update_rate_combo.bind('<<ComboboxSelected>>', self.on_update_rate_change)
         
@@ -358,35 +358,41 @@ class ISM330DHCXTool:
         self.data_thread.start()
         
     def data_processing_loop(self):
-        """Main data processing loop."""
+        """Main data processing loop optimized for 52Hz."""
+        log_counter = 0  # Counter for alternating log/show pattern
+        last_status_update = time.time()
+        
         while self.running:
             if self.is_connected and self.is_collecting:
                 try:
-                    # Prefer batch read for performance
-                    lines = self.serial_interface.read_all_available()
-                    if not lines:
-                        # Fall back to single line
-                        single = self.serial_interface.read_line()
-                        if single:
-                            lines = [single]
-
+                    # Use fast batch read for performance
+                    lines = self.serial_interface.read_available_text_lines()
+                    
                     if lines:
-                        for data in lines:
+                        for i, data in enumerate(lines):
                             parsed_data = self.data_parser.parse_line(data)
                             if parsed_data:
-                                # Enqueue for UI thread to process
-                                self.visualization.update_data(parsed_data)
-                                # Log data if enabled (background thread safe)
-                                if self.logging_var.get():
-                                    self.data_logger.log_data(parsed_data)
-
-                        # Update status (UI thread)
-                        self.root.after(0, self.update_data_count)
+                                # Implement alternating pattern: log even, show odd
+                                # This reduces processing load by 50%
+                                if log_counter % 2 == 0:
+                                    # Log this data point
+                                    if self.logging_var.get():
+                                        self.data_logger.log_data(parsed_data)
+                                else:
+                                    # Show this data point
+                                    self.visualization.update_data(parsed_data)
+                                
+                                log_counter += 1
+                        
+                        # Update status less frequently (every 0.5 seconds)
+                        if time.time() - last_status_update > 0.5:
+                            self.root.after(0, self.update_data_count)
+                            last_status_update = time.time()
                             
                 except Exception as e:
                     print(f"Data processing error: {e}")
                     
-            time.sleep(0.001)  # Fast loop; UI throttled by visualization.update_interval
+            time.sleep(0.0001)  # Very fast loop for 52Hz (19.2ms per sample)
             
     def update_data_count(self):
         """Update data count in status bar."""
