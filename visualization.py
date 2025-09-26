@@ -10,11 +10,13 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from matplotlib.figure import Figure
 import matplotlib.animation as animation
 import numpy as np
-import pandas as pd
 from typing import Dict, Any, List, Optional
+from collections import deque
+import queue
 import logging
 from datetime import datetime, timedelta
 import math
+import time
 
 class CircularGauge:
     """Circular gauge widget for angle display."""
@@ -28,7 +30,7 @@ class CircularGauge:
         self.max_val = max_val
         self.size = size
         self.unit = unit
-        self.current_value = 0
+        self.current_value = 0.0
         
         # Create canvas
         self.canvas = tk.Canvas(parent, width=size, height=size + 30, bg='white')
@@ -116,22 +118,68 @@ class VisualizationEngine:
         self.root = root
         self.logger = logging.getLogger(__name__)
         
-        # Data storage
-        self.data_buffers = {
-            'RAW_DATA': {'time': [], 'acc_x': [], 'acc_y': [], 'acc_z': [], 
-                        'gyro_x': [], 'gyro_y': [], 'gyro_z': []},
-            'ANGLES': {'time': [], 'altitude': [], 'azimuth': [], 'zenith': []},
-            'QUAT': {'time': [], 'qx': [], 'qy': [], 'qz': [], 'qw': []},
-            'GYRO_BIAS_MDI': {'time': [], 'bias_x': [], 'bias_y': [], 'bias_z': []},
-            'ANGLES_DI': {'time': [], 'pitch': [], 'yaw': [], 'roll': []},
-            'ANGLES_SI': {'time': [], 'pitch': [], 'yaw': [], 'roll': []},
-            'ANGLES_CO': {'time': [], 'pitch': [], 'yaw': [], 'roll': []},
-            'ANGLES_FU': {'time': [], 'pitch': [], 'yaw': [], 'roll': []}
-        }
-        
         # Chart configuration
         self.max_data_points = 1000
         self.update_interval = 100  # ms
+
+        # Relative time baseline (set on first data after reset)
+        self.time_zero: Optional[float] = None
+        
+        # Data storage using deque for efficient pops
+        self.data_buffers = {
+            'RAW_DATA': {
+                'time': deque(maxlen=self.max_data_points),
+                'acc_x': deque(maxlen=self.max_data_points),
+                'acc_y': deque(maxlen=self.max_data_points),
+                'acc_z': deque(maxlen=self.max_data_points),
+                'gyro_x': deque(maxlen=self.max_data_points),
+                'gyro_y': deque(maxlen=self.max_data_points),
+                'gyro_z': deque(maxlen=self.max_data_points)
+            },
+            'ANGLES': {
+                'time': deque(maxlen=self.max_data_points),
+                'altitude': deque(maxlen=self.max_data_points),
+                'azimuth': deque(maxlen=self.max_data_points),
+                'zenith': deque(maxlen=self.max_data_points)
+            },
+            'QUAT': {
+                'time': deque(maxlen=self.max_data_points),
+                'qx': deque(maxlen=self.max_data_points),
+                'qy': deque(maxlen=self.max_data_points),
+                'qz': deque(maxlen=self.max_data_points),
+                'qw': deque(maxlen=self.max_data_points)
+            },
+            'GYRO_BIAS_MDI': {
+                'time': deque(maxlen=self.max_data_points),
+                'bias_x': deque(maxlen=self.max_data_points),
+                'bias_y': deque(maxlen=self.max_data_points),
+                'bias_z': deque(maxlen=self.max_data_points)
+            },
+            'ANGLES_DI': {
+                'time': deque(maxlen=self.max_data_points),
+                'pitch': deque(maxlen=self.max_data_points),
+                'yaw': deque(maxlen=self.max_data_points),
+                'roll': deque(maxlen=self.max_data_points)
+            },
+            'ANGLES_SI': {
+                'time': deque(maxlen=self.max_data_points),
+                'pitch': deque(maxlen=self.max_data_points),
+                'yaw': deque(maxlen=self.max_data_points),
+                'roll': deque(maxlen=self.max_data_points)
+            },
+            'ANGLES_CO': {
+                'time': deque(maxlen=self.max_data_points),
+                'pitch': deque(maxlen=self.max_data_points),
+                'yaw': deque(maxlen=self.max_data_points),
+                'roll': deque(maxlen=self.max_data_points)
+            },
+            'ANGLES_FU': {
+                'time': deque(maxlen=self.max_data_points),
+                'pitch': deque(maxlen=self.max_data_points),
+                'yaw': deque(maxlen=self.max_data_points),
+                'roll': deque(maxlen=self.max_data_points)
+            }
+        }
         
         # Matplotlib style
         plt.style.use('seaborn-v0_8')
@@ -140,6 +188,18 @@ class VisualizationEngine:
         self.charts = {}
         self.gauges = {}
         self.data_table = None
+
+        # Thread-safe queue for parsed data coming from background thread
+        self.update_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue(maxsize=10000)
+
+        # Track last known ANGLES state to derive events
+        self._last_angles_state: Optional[str] = None
+
+        # Throttling settings
+        self._last_table_update_ms: float = 0.0
+        self.table_update_interval_ms: int = 500
+        self._last_autoscale_ms: float = 0.0
+        self.autoscale_interval_ms: int = 200
         
     def setup_charts(self, parent):
         """Setup line charts for time-series data."""
@@ -226,7 +286,7 @@ class VisualizationEngine:
         
         # Create subplots for different filters
         self.filter_axes = self.filter_fig.subplots(3, 2, sharex=True)
-        self.filter_fig.suptitle('Filter Outputs (including Resulting Angle)')
+        self.filter_fig.suptitle('Filter Outputs (with Final ANGLES time series)')
         
         filter_types = ['DI', 'SI', 'CO', 'FU']
         filter_names = ['MotionDI', 'Simple Integration', 'Complementary', 'Fused']
@@ -247,21 +307,37 @@ class VisualizationEngine:
                 self.filter_lines[key] = ax.plot([], [], 
                     color=['red', 'green', 'blue'][j], linewidth=1)[0]
         
-        # Add resulting angle plot (magnitude of pitch/yaw/roll) for fused output
-        self.resulting_ax = self.filter_axes[2, 0]
-        self.resulting_ax2 = self.filter_axes[2, 1]
-        for ax in (self.resulting_ax, self.resulting_ax2):
-            ax.set_title('Resulting Angle (deg)')
+        # Bottom row: show final ANGLES (altitude, azimuth, zenith) time series, not fused magnitude
+        self.angles_ax_left = self.filter_axes[2, 0]
+        self.angles_ax_right = self.filter_axes[2, 1]
+        for ax in (self.angles_ax_left, self.angles_ax_right):
+            ax.set_title('Final ANGLES (Altitude, Azimuth, Zenith)')
             ax.set_ylabel('Angle (degrees)')
             ax.grid(True, alpha=0.3)
-        self.resulting_line = self.resulting_ax.plot([], [], color='magenta', linewidth=1)[0]
-        self.resulting_line2 = self.resulting_ax2.plot([], [], color='magenta', linewidth=1)[0]
+
+        # Create separate line sets for both axes (kept in the same registry for clearing)
+        self.angles_lines_left = {
+            'ANGLES_altitude_left': self.angles_ax_left.plot([], [], color='red', linewidth=1)[0],
+            'ANGLES_azimuth_left': self.angles_ax_left.plot([], [], color='green', linewidth=1)[0],
+            'ANGLES_zenith_left': self.angles_ax_left.plot([], [], color='blue', linewidth=1)[0],
+        }
+        self.angles_lines_right = {
+            'ANGLES_altitude_right': self.angles_ax_right.plot([], [], color='red', linewidth=1)[0],
+            'ANGLES_azimuth_right': self.angles_ax_right.plot([], [], color='green', linewidth=1)[0],
+            'ANGLES_zenith_right': self.angles_ax_right.plot([], [], color='blue', linewidth=1)[0],
+        }
+
+        # Register all lines, including final ANGLES lines, for consistent clearing
+        filter_all_lines = {}
+        filter_all_lines.update(self.filter_lines)
+        filter_all_lines.update(self.angles_lines_left)
+        filter_all_lines.update(self.angles_lines_right)
 
         self.charts['filter'] = {
             'figure': self.filter_fig,
             'canvas': self.filter_canvas,
             'axes': self.filter_axes,
-            'lines': self.filter_lines
+            'lines': filter_all_lines
         }
         
     def setup_quaternion_charts(self):
@@ -406,20 +482,35 @@ class VisualizationEngine:
         self.update_data_table()
         
     def update_data(self, parsed_data: Dict[str, Any]):
-        """Update visualization with new data."""
+        """Enqueue new parsed data to be processed on the UI thread."""
         if not parsed_data:
             return
-            
+        try:
+            self.update_queue.put_nowait(parsed_data)
+        except queue.Full:
+            # Drop oldest to make room for newest
+            try:
+                _ = self.update_queue.get_nowait()
+            except Exception:
+                pass
+            try:
+                self.update_queue.put_nowait(parsed_data)
+            except Exception:
+                pass
+
+    def _apply_parsed_data(self, parsed_data: Dict[str, Any]):
+        """Apply parsed data to buffers and UI state (no drawing here)."""
         data_type = parsed_data['type']
-        data = parsed_data['data']
-        timestamp = parsed_data['timestamp']
-        
-        # Add to appropriate buffer
-        if data_type in self.data_buffers:
+        data = parsed_data.get('data')
+        timestamp = parsed_data.get('timestamp')
+
+        if data_type in self.data_buffers and timestamp is not None and data is not None:
+            if self.time_zero is None:
+                self.time_zero = float(timestamp)
+            t_rel = float(timestamp) - float(self.time_zero)
             buffer = self.data_buffers[data_type]
-            buffer['time'].append(timestamp)
-            
-            # Add data based on type
+            buffer['time'].append(t_rel)
+
             if data_type == 'RAW_DATA':
                 buffer['acc_x'].append(data.acc_x)
                 buffer['acc_y'].append(data.acc_y)
@@ -427,51 +518,76 @@ class VisualizationEngine:
                 buffer['gyro_x'].append(data.gyro_x)
                 buffer['gyro_y'].append(data.gyro_y)
                 buffer['gyro_z'].append(data.gyro_z)
-                
+
             elif data_type == 'ANGLES':
                 buffer['altitude'].append(data.altitude)
                 buffer['azimuth'].append(data.azimuth)
                 buffer['zenith'].append(data.zenith)
-                
+
                 # Update gauges
-                self.gauges['azimuth'].update_value(data.azimuth)
-                self.gauges['altitude'].update_value(data.altitude)
-                self.gauges['zenith'].update_value(data.zenith)
-                
-                # Update state
+                if 'azimuth' in self.gauges:
+                    self.gauges['azimuth'].update_value(data.azimuth)
+                if 'altitude' in self.gauges:
+                    self.gauges['altitude'].update_value(data.altitude)
+                if 'zenith' in self.gauges:
+                    self.gauges['zenith'].update_value(data.zenith)
+
+                # Update state label and raise event if changed
                 self.state_label.config(text=data.state)
                 state_color = 'green' if data.state == 'MONITORING' else 'orange'
                 self.state_label.config(foreground=state_color)
-                
+
+                try:
+                    if self._last_angles_state is None or self._last_angles_state != data.state:
+                        action = 'RAISED' if (data.state and data.state.upper() != 'CLEARED') else 'CLEARED'
+                        self.add_event(t_rel, 'ANGLES_STATE', action, data.state)
+                        self._last_angles_state = data.state
+                except Exception:
+                    pass
+
             elif data_type == 'QUAT':
                 buffer['qx'].append(data.qx)
                 buffer['qy'].append(data.qy)
                 buffer['qz'].append(data.qz)
                 buffer['qw'].append(data.qw)
-                
+
             elif data_type == 'GYRO_BIAS_MDI':
                 buffer['bias_x'].append(data.bias_x)
                 buffer['bias_y'].append(data.bias_y)
                 buffer['bias_z'].append(data.bias_z)
-                
+
             elif data_type.startswith('ANGLES_'):
-                filter_type = data_type.split('_')[1]
                 buffer['pitch'].append(data.pitch)
                 buffer['yaw'].append(data.yaw)
                 buffer['roll'].append(data.roll)
-                buffer['altitude'].append(data.altitude)
-                buffer['azimuth'].append(data.azimuth)
-                buffer['zenith'].append(data.zenith)
-            # Maintain buffer size
-            if len(buffer['time']) > self.max_data_points:
-                for key in buffer:
-                    buffer[key].pop(0)
-        
-        # Update charts
-        self.update_charts()
-        
-        # Update data table
-        self.update_data_table()
+
+            # Deque maxlen enforces buffer size; no manual truncation needed
+
+    def process_pending_data(self):
+        """Drain the pending data queue and update charts and table once."""
+        drained = 0
+        try:
+            while True:
+                item = self.update_queue.get_nowait()
+                self._apply_parsed_data(item)
+                drained += 1
+        except queue.Empty:
+            pass
+
+        if drained > 0:
+            self.update_charts()
+            self.update_data_table()
+
+    def start_update_loop(self):
+        """Start periodic UI update loop based on update_interval."""
+        def _loop():
+            try:
+                self.process_pending_data()
+            finally:
+                # schedule next
+                self.root.after(self.update_interval, _loop)
+        # kick off
+        self.root.after(self.update_interval, _loop)
         
     def update_charts(self):
         """Update all charts with current data."""
@@ -503,10 +619,13 @@ class VisualizationEngine:
             if buffer[axis]:
                 self.charts['raw']['lines'][axis].set_data(buffer['time'], buffer[axis])
         
-        # Auto-scale axes
-        for ax in self.charts['raw']['axes']:
-            ax.relim()
-            ax.autoscale_view()
+        # Auto-scale axes (throttled)
+        now_ms = time.time() * 1000.0
+        if now_ms - self._last_autoscale_ms >= self.autoscale_interval_ms:
+            for ax in self.charts['raw']['axes']:
+                ax.relim()
+                ax.autoscale_view()
+            self._last_autoscale_ms = now_ms
         
         self.charts['raw']['canvas'].draw_idle()
     
@@ -514,6 +633,9 @@ class VisualizationEngine:
         """Update filter output charts."""
         filter_types = ['DI', 'SI', 'CO', 'FU']
         
+        now_ms = time.time() * 1000.0
+        do_autoscale = (now_ms - self._last_autoscale_ms) >= self.autoscale_interval_ms
+
         for i, filter_type in enumerate(filter_types):
             buffer = self.data_buffers[f'ANGLES_{filter_type}']
             if not buffer['time']:
@@ -528,26 +650,33 @@ class VisualizationEngine:
                 if buffer[angle]:
                     self.charts['filter']['lines'][key].set_data(buffer['time'], buffer[angle])
             
-            # Auto-scale axes
-            ax.relim()
-            ax.autoscale_view()
-        
-        # Compute resulting angle from Fused (if available)
-        fused = self.data_buffers['ANGLES_FU']
-        if fused['time']:
-            import numpy as np
-            t = fused['time']
-            pitch = np.asarray(fused['pitch'], dtype=float)
-            yaw = np.asarray(fused['yaw'], dtype=float)
-            roll = np.asarray(fused['roll'], dtype=float)
-            res = np.sqrt(pitch * pitch + yaw * yaw + roll * roll)
-            self.resulting_line.set_data(t, res)
-            self.resulting_line2.set_data(t, res)
-            # Autoscale
-            for ax in (self.resulting_ax, self.resulting_ax2):
+            # Auto-scale axes (throttled)
+            if do_autoscale:
                 ax.relim()
                 ax.autoscale_view()
 
+        # Update final ANGLES plots (altitude, azimuth, zenith)
+        angles = self.data_buffers['ANGLES']
+        if angles['time']:
+            t = angles['time']
+            # Left axis
+            self.angles_lines_left['ANGLES_altitude_left'].set_data(t, angles['altitude'])
+            self.angles_lines_left['ANGLES_azimuth_left'].set_data(t, angles['azimuth'])
+            self.angles_lines_left['ANGLES_zenith_left'].set_data(t, angles['zenith'])
+            if do_autoscale:
+                self.angles_ax_left.relim()
+                self.angles_ax_left.autoscale_view()
+
+            # Right axis (mirror for now)
+            self.angles_lines_right['ANGLES_altitude_right'].set_data(t, angles['altitude'])
+            self.angles_lines_right['ANGLES_azimuth_right'].set_data(t, angles['azimuth'])
+            self.angles_lines_right['ANGLES_zenith_right'].set_data(t, angles['zenith'])
+            if do_autoscale:
+                self.angles_ax_right.relim()
+                self.angles_ax_right.autoscale_view()
+
+        if do_autoscale:
+            self._last_autoscale_ms = now_ms
         self.charts['filter']['canvas'].draw_idle()
     
     def update_quaternion_charts(self):
@@ -561,9 +690,12 @@ class VisualizationEngine:
             if buffer[component]:
                 self.charts['quaternion']['lines'][component].set_data(buffer['time'], buffer[component])
         
-        # Auto-scale axes
-        self.charts['quaternion']['axes'].relim()
-        self.charts['quaternion']['axes'].autoscale_view()
+        # Auto-scale axes (throttled)
+        now_ms = time.time() * 1000.0
+        if now_ms - self._last_autoscale_ms >= self.autoscale_interval_ms:
+            self.charts['quaternion']['axes'].relim()
+            self.charts['quaternion']['axes'].autoscale_view()
+            self._last_autoscale_ms = now_ms
         
         self.charts['quaternion']['canvas'].draw_idle()
     
@@ -571,6 +703,10 @@ class VisualizationEngine:
         """Update data table with current values."""
         if not self.data_table:
             return
+        now_ms = time.time() * 1000.0
+        if now_ms - self._last_table_update_ms < self.table_update_interval_ms:
+            return
+        self._last_table_update_ms = now_ms
             
         # Clear existing items
         for item in self.data_table.get_children():
@@ -630,6 +766,45 @@ class VisualizationEngine:
         if self.data_table:
             for item in self.data_table.get_children():
                 self.data_table.delete(item)
+
+    def reset(self):
+        """Full reset: clear queues, data, events, and re-baseline time."""
+        # Drain pending queue
+        try:
+            while True:
+                _ = self.update_queue.get_nowait()
+        except queue.Empty:
+            pass
+
+        # Reset time baseline and state
+        self.time_zero = None
+        self._last_angles_state = None
+        self._last_table_update_ms = 0.0
+        self._last_autoscale_ms = 0.0
+
+        # Clear events
+        self.events_data = []
+        try:
+            if hasattr(self, 'events_table') and self.events_table:
+                for item in self.events_table.get_children():
+                    self.events_table.delete(item)
+            if hasattr(self, 'events_scatter') and hasattr(self, 'events_ax'):
+                self.events_scatter.set_data([], [])
+                self.events_ax.relim()
+                self.events_ax.autoscale_view()
+                self.events_canvas.draw_idle()
+        except Exception:
+            pass
+
+        # Clear all visual data
+        self.clear_data()
+
+    def set_update_interval(self, interval_ms: int):
+        """Set UI update interval in milliseconds (min 10ms)."""
+        try:
+            self.update_interval = max(10, int(interval_ms))
+        except Exception:
+            pass
     
     def export_chart(self, chart_name: str, filename: str):
         """Export chart to file."""

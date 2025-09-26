@@ -3,8 +3,8 @@ Serial Interface Module
 Handles COM port communication with ISM330DHCX sensor.
 """
 
-import serial
-import serial.tools.list_ports
+import serial  # type: ignore
+import serial.tools.list_ports  # type: ignore
 import threading
 import time
 import logging
@@ -19,11 +19,13 @@ class SerialInterface:
         self.is_connected = False
         self.port = None
         self.baud_rate = 115200
-        self.timeout = 1.0
+        self.timeout = 0.05
         self.logger = logging.getLogger(__name__)
         
         # Data callback for real-time processing
         self.data_callback: Optional[Callable[[str], None]] = None
+        # Internal receive text buffer for partial lines
+        self._rx_text_buffer: str = ""
         
     def get_available_ports(self) -> List[str]:
         """Get list of available COM ports."""
@@ -56,6 +58,8 @@ class SerialInterface:
             self.serial_connection = serial.Serial(
                 port=port,
                 baudrate=baud_rate,
+                timeout=self.timeout,
+                write_timeout=0.2
             )
             
             # Quiet console prints
@@ -103,9 +107,13 @@ class SerialInterface:
             self.is_connected = True
             # Send VERSION command to test connection
             self.write_command("VERSION")
-            # Try to read response
-            response = self.read_line()
-            return response is not None and len(response) > 0
+            # Try to read a few short iterations to avoid long block
+            start = time.time()
+            while time.time() - start < 0.5:
+                response = self.read_line()
+                if response:
+                    return True
+            return False
             
         except Exception as e:
             self.logger.error(f"Connection test failed: {e}")
@@ -174,7 +182,7 @@ class SerialInterface:
         Returns:
             List of decoded line strings
         """
-        lines = []
+        lines: List[str] = []
         if not self.is_connected or not self.serial_connection:
             return lines
             
@@ -189,6 +197,30 @@ class SerialInterface:
             self.logger.error(f"Error reading all available data: {e}")
             
         return lines
+
+    def read_available_text_lines(self) -> List[str]:
+        """Fast path: read all available bytes and split into lines with buffering."""
+        if not self.is_connected or not self.serial_connection:
+            return []
+        try:
+            waiting = self.serial_connection.in_waiting
+            if waiting <= 0:
+                return []
+            raw = self.serial_connection.read(waiting)
+            if not raw:
+                return []
+            text = raw.decode('utf-8', errors='ignore')
+            if self._rx_text_buffer:
+                text = self._rx_text_buffer + text
+                self._rx_text_buffer = ""
+            parts = text.split('\n')
+            if text and not text.endswith('\n'):
+                self._rx_text_buffer = parts.pop()
+            # Strip CR and empties
+            return [p.strip() for p in parts if p and p.strip()]
+        except Exception as e:
+            self.logger.error(f"Error fast-reading available data: {e}")
+            return []
     
     def set_data_callback(self, callback: Callable[[str], None]):
         """
