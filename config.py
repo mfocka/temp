@@ -16,7 +16,7 @@ class SerialConfig:
     """Serial communication configuration."""
     default_port: str = ""
     default_baud_rate: int = 115200
-    timeout: float = 1.0
+    timeout: float = 0.001  # Optimized for 52Hz
     auto_connect: bool = False
     auto_reconnect: bool = True
     reconnect_delay: float = 5.0
@@ -24,8 +24,8 @@ class SerialConfig:
 @dataclass
 class DataConfig:
     """Data processing configuration."""
-    max_buffer_size: int = 1000
-    update_rate_hz: int = 10
+    max_buffer_size: int = 500  # Optimized for 52Hz
+    update_rate_hz: int = 52  # Target 52Hz rate
     enable_logging: bool = True
     log_directory: str = "./logs"
     max_file_size_mb: int = 10

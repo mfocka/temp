@@ -75,20 +75,48 @@ class DataLogger:
         
     def _logging_worker(self):
         """Background worker for logging data."""
+        batch_size = 50  # Process data in batches for better performance
+        batch = []
+        last_flush = time.time()
+        flush_interval = 1.0  # Flush every second
+        
         while self.running:
             try:
                 # Get data from queue with timeout
-                data = self.data_queue.get(timeout=1.0)
+                data = self.data_queue.get(timeout=0.01)  # Shorter timeout for faster response
                 if data is None:  # Shutdown signal
                     break
                     
-                self._write_data(data)
+                batch.append(data)
+                
+                # Process batch when full or on timeout
+                if len(batch) >= batch_size or (time.time() - last_flush) > flush_interval:
+                    for item in batch:
+                        self._write_data(item)
+                    
+                    # Flush all files periodically
+                    if time.time() - last_flush > flush_interval:
+                        for file_handle in self.file_handles.values():
+                            try:
+                                file_handle.flush()
+                            except:
+                                pass
+                        last_flush = time.time()
+                    
+                    batch.clear()
+                    
                 self.data_queue.task_done()
                 
             except queue.Empty:
+                # Process any remaining batch items
+                if batch:
+                    for item in batch:
+                        self._write_data(item)
+                    batch.clear()
                 continue
             except Exception as e:
                 self.logger.error(f"Error in logging worker: {e}")
+                batch.clear()
                 
     def log_data(self, parsed_data: Dict[str, Any]):
         """
@@ -108,9 +136,19 @@ class DataLogger:
             
     def _write_data(self, parsed_data: Dict[str, Any]):
         """Write data to CSV file."""
-        data_type = parsed_data['type']
-        data = parsed_data['data']
-        timestamp = parsed_data['timestamp']
+        data_type = parsed_data.get('type')
+        if not data_type:
+            return
+            
+        # Skip non-data messages
+        if data_type in ['INFO', 'EVENTS', 'UNKNOWN']:
+            return
+            
+        data = parsed_data.get('data')
+        if not data:
+            return
+            
+        timestamp = parsed_data.get('timestamp', time.time())
         
         # Get or create file for this data type
         file_path = self._get_file_path(data_type)
@@ -199,7 +237,7 @@ class DataLogger:
                 row = [timestamp, str(data)]
                 
             writer.writerow(row)
-            self.file_handles[file_path].flush()
+            # Don't flush after every row for better performance
             
         except Exception as e:
             self.logger.error(f"Error writing CSV row: {e}")
